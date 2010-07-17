@@ -2,7 +2,7 @@
  * JetS3t : Java S3 Toolkit
  * Project hosted at http://bitbucket.org/jmurty/jets3t/
  *
- * Copyright 2006 James Murty, 2008 Zmanda Inc.
+ * Copyright 2006-2010 James Murty, 2008 Zmanda Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,11 +44,11 @@ public class AWSDevPayCredentials extends AWSCredentials {
      * @param awsAccessKey
      * AWS access key for an Amazon S3 account.
      * @param awsSecretAccessKey
-     * AWS secret key for an Amazon S3 acount.
+     * AWS secret key for an Amazon S3 account.
      * @param awsUserToken
-     * DevPay user token for an Amazon S3 acount.
+     * DevPay user token for an Amazon S3 account.
      * @param awsProductToken
-     * DevPay product token for an Amazon S3 acount.
+     * DevPay product token for an Amazon S3 account.
      */
     public AWSDevPayCredentials(String awsAccessKey, String awsSecretAccessKey, String awsUserToken, String awsProductToken) {
         super(awsAccessKey, awsSecretAccessKey);
@@ -62,11 +62,11 @@ public class AWSDevPayCredentials extends AWSCredentials {
      * @param awsAccessKey
      * AWS access key for an Amazon S3 account.
      * @param awsSecretAccessKey
-     * AWS secret key for an Amazon S3 acount.
+     * AWS secret key for an Amazon S3 account.
      * @param awsUserToken
-     * DevPay user token for an Amazon S3 acount.
+     * DevPay user token for an Amazon S3 account.
      * @param awsProductToken
-     * DevPay product token for an Amazon S3 acount.
+     * DevPay product token for an Amazon S3 account.
      * @param friendlyName
      * a name identifying the owner of the credentials, such as 'James'.
      */

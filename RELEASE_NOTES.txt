@@ -1,4 +1,27 @@
 -------------
+Version 0.8.0
+-------------
+
+TOOLKIT
+
+  * General
+
+- Compatibility with JDK 1.4 is no longer a project goal, any users
+  of Java 1.4 will need to upgrade to continue running JetS3t.
+- Removed antiquated and unsupported SOAP S3 service implementation
+  from toolkit.
+
+  * SOAP implementation
+
+- REMOVED from project.
+
+KUDOS TO:
+
+- Claudio Cherubino of Google Inc. for significant refactoring work
+  and the addition of full support for the Google Storage service.
+
+
+-------------
 Version 0.7.4
 -------------
 

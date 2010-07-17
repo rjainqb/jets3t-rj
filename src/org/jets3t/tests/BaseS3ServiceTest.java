@@ -50,6 +50,7 @@ import org.jets3t.service.model.S3BucketLoggingStatus;
 import org.jets3t.service.model.S3Object;
 import org.jets3t.service.model.S3Owner;
 import org.jets3t.service.security.AWSCredentials;
+import org.jets3t.service.security.ProviderCredentials;
 import org.jets3t.service.utils.Mimetypes;
 import org.jets3t.service.utils.RestUtils;
 import org.jets3t.service.utils.ServiceUtils;
@@ -64,7 +65,7 @@ import org.jets3t.service.utils.ServiceUtils;
  */
 public abstract class BaseS3ServiceTest extends TestCase {
     protected String TEST_PROPERTIES_FILENAME = "test.properties";
-    protected AWSCredentials awsCredentials = null;
+    protected ProviderCredentials credentials = null;
 
     public BaseS3ServiceTest() throws IOException {
         InputStream propertiesIS =
@@ -77,12 +78,12 @@ public abstract class BaseS3ServiceTest extends TestCase {
 
         Properties testProperties = new Properties();
         testProperties.load(propertiesIS);
-        awsCredentials = new AWSCredentials(
+        credentials = new AWSCredentials(
             testProperties.getProperty("aws.accesskey"),
             testProperties.getProperty("aws.secretkey"));
     }
 
-    protected abstract S3Service getS3Service(AWSCredentials awsCredentials) throws S3ServiceException;
+    protected abstract S3Service getS3Service(ProviderCredentials credentials) throws S3ServiceException;
 
     public void testObtainAnonymousServices() throws Exception {
         getS3Service(null);
@@ -97,11 +98,11 @@ public abstract class BaseS3ServiceTest extends TestCase {
     }
 
     public void testListBucketsWithCredentials() throws Exception {
-        getS3Service(awsCredentials).listAllBuckets();
+        getS3Service(credentials).listAllBuckets();
     }
 
     public void testBucketManagement() throws Exception {
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
         try {
             s3Service.createBucket(new S3Bucket());
@@ -121,7 +122,7 @@ public abstract class BaseS3ServiceTest extends TestCase {
         } catch (S3ServiceException e) {
         }
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases_temp";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases_temp";
         s3Service.createBucket(bucketName);
 
         boolean bucketExists = s3Service.isBucketAccessible(bucketName);
@@ -149,9 +150,9 @@ public abstract class BaseS3ServiceTest extends TestCase {
     }
 
     public void testObjectManagement() throws Exception {
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases";
 
         S3Bucket bucket = s3Service.createBucket(bucketName);
         S3Object object = new S3Object("TestObject");
@@ -254,8 +255,7 @@ public abstract class BaseS3ServiceTest extends TestCase {
         assertEquals("Missing purpose metadata", "For testing purposes",
             dataObject.getMetadata("purpose"));
         assertNull("Expected data input stream to be unavailable", dataObject.getDataInputStream());
-        // Object's content length is only available from REST detail requests, not SOAP ones.
-        // assertEquals("Unexpected size for object", objectData.length(), dataObject.getContentLength());
+        assertEquals("Unexpected size for object", objectData.length(), dataObject.getContentLength());
 
         // Test object GET constraints.
         Calendar objectCreationTimeCal = Calendar.getInstance(TimeZone.getTimeZone("GMT"), Locale.US);
@@ -357,9 +357,9 @@ public abstract class BaseS3ServiceTest extends TestCase {
         boolean jets3tBucketAvailable = anonymousS3Service.isBucketAccessible("jets3t");
         assertTrue("Cannot find public jets3t bucket", jets3tBucketAvailable);
 
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases";
         S3Bucket bucket = s3Service.createBucket(bucketName);
         S3Object object = null;
 
@@ -424,9 +424,9 @@ public abstract class BaseS3ServiceTest extends TestCase {
     }
 
     public void testObjectListing() throws Exception {
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases";
 
         S3Bucket bucket = s3Service.createBucket(bucketName);
 
@@ -524,9 +524,9 @@ public abstract class BaseS3ServiceTest extends TestCase {
     }
 
     public void testBucketLogging() throws Exception {
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases";
 
         S3Bucket bucket = s3Service.createBucket(bucketName);
 
@@ -538,7 +538,7 @@ public abstract class BaseS3ServiceTest extends TestCase {
         // Enable logging (non-existent target bucket)
         try {
             S3BucketLoggingStatus newLoggingStatus = new S3BucketLoggingStatus(
-                awsCredentials.getAccessKey() + ".NonExistentBucketName", "access-log-");
+                credentials.getAccessKey() + ".NonExistentBucketName", "access-log-");
             s3Service.setBucketLoggingStatus(bucket.getName(), newLoggingStatus, true);
             fail("Using non-existent target bucket should have caused an exception");
         } catch (Exception e) {
@@ -580,9 +580,9 @@ public abstract class BaseS3ServiceTest extends TestCase {
     }
 
     public void testUrlSigning() throws Exception {
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases";
 
         S3Bucket bucket = s3Service.createBucket(bucketName);
 
@@ -676,9 +676,9 @@ public abstract class BaseS3ServiceTest extends TestCase {
     }
 
     public void testHashVerifiedUploads() throws Exception {
-        S3Service s3Service = getS3Service(awsCredentials);
+        S3Service s3Service = getS3Service(credentials);
 
-        String bucketName = awsCredentials.getAccessKey() + ".jets3t_TestCases";
+        String bucketName = credentials.getAccessKey() + ".jets3t_TestCases";
 
         S3Bucket bucket = s3Service.createBucket(bucketName);
 
@@ -696,8 +696,8 @@ public abstract class BaseS3ServiceTest extends TestCase {
             s3Service.putObject(bucket, object);
             fail("Should have failed due to invalid hash value");
         } catch (S3ServiceException e) {
-            // This error check would be nice to have, but it only works for the REST interface, not SOAP.
-            // assertEquals("Expected error code indicating invalid md5 hash", "InvalidDigest", e.getErrorCode());
+            assertEquals("Expected error code indicating invalid md5 hash", "InvalidDigest",
+                e.getS3ErrorCode());
         }
         object = new S3Object(bucket, "Testing MD5 Hashing", dataString);
 
@@ -710,8 +710,7 @@ public abstract class BaseS3ServiceTest extends TestCase {
             s3Service.putObject(bucket, object);
             fail("Should have failed due to incorrect hash value");
         } catch (S3ServiceException e) {
-            // This error checks would be nice to have, but it only works for the REST interface, not SOAP.
-            // assertEquals("Expected error code indicating invalid md5 hash", "BadDigest", e.getErrorCode());
+            assertEquals("Expected error code indicating invalid md5 hash", "BadDigest", e.getS3ErrorCode());
         }
         object = new S3Object(bucket, "Testing MD5 Hashing", dataString);
 
