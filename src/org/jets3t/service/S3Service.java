@@ -20,6 +20,7 @@ package org.jets3t.service;
 
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -27,8 +28,20 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import org.apache.commons.httpclient.HostConfiguration;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.NTCredentials;
+import org.apache.commons.httpclient.ProxyHost;
+import org.apache.commons.httpclient.UsernamePasswordCredentials;
+import org.apache.commons.httpclient.auth.AuthScope;
+import org.apache.commons.httpclient.contrib.proxy.PluginProxyUtil;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.jets3t.service.acl.AccessControlList;
@@ -90,11 +103,6 @@ public abstract class S3Service implements Serializable {
 
     private ProviderCredentials credentials = null;
 
-    private String awsDevPayUserToken = null;
-    private String awsDevPayProductToken = null;
-
-    private boolean isRequesterPaysEnabled = false;
-
     private String invokingApplicationDescription = null;
     private boolean isHttpsOnly = true;
     private int internalErrorRetryMax = 5;
@@ -133,17 +141,8 @@ public abstract class S3Service implements Serializable {
         this.invokingApplicationDescription = invokingApplicationDescription;
 
         this.jets3tProperties = jets3tProperties;
-        this.isHttpsOnly = jets3tProperties.getBoolProperty("s3service.https-only", true);
+        this.isHttpsOnly = this.getHttpsOnly();
         this.internalErrorRetryMax = jets3tProperties.getIntProperty("s3service.internal-error-retry-max", 5);
-
-        if (credentials instanceof AWSDevPayCredentials) {
-            AWSDevPayCredentials awsDevPayCredentials = (AWSDevPayCredentials) credentials;
-            this.awsDevPayUserToken = awsDevPayCredentials.getUserToken();
-            this.awsDevPayProductToken = awsDevPayCredentials.getProductToken();
-        } else {
-            this.awsDevPayUserToken = jets3tProperties.getStringProperty("devpay.user-token", null);
-            this.awsDevPayProductToken = jets3tProperties.getStringProperty("devpay.product-token", null);
-        }
 
         // Configure the InetAddress DNS caching times to work well with S3. The cached DNS will
         // timeout after 5 minutes, while failed DNS lookups will be retried after 1 second.
@@ -208,76 +207,6 @@ public abstract class S3Service implements Serializable {
      */
     public boolean isShutdown() {
         return this.isShutdown;
-    }
-
-    /**
-     * Set the User Token value to use for requests to a DevPay S3 account.
-     * The user token is not required for DevPay web products for which the
-     * user token was created after 15th May 2008.
-     *
-     * @param userToken
-     * the user token value provided by the AWS DevPay activation service.
-     */
-    public void setDevPayUserToken(String userToken) {
-        this.awsDevPayUserToken = userToken;
-    }
-
-    /**
-     * @return
-     * the user token value to use in requests to a DevPay S3 account, or null
-     * if no such token value has been set.
-     */
-    public String getDevPayUserToken() {
-        return this.awsDevPayUserToken;
-    }
-
-    /**
-     * Set the Product Token value to use for requests to a DevPay S3 account.
-     *
-     * @param productToken
-     * the token that identifies your DevPay product.
-     */
-    public void setDevPayProductToken(String productToken) {
-        this.awsDevPayProductToken = productToken;
-    }
-
-    /**
-     * @return
-     * the product token value to use in requests to a DevPay S3 account, or
-     * null if no such token value has been set.
-     */
-    public String getDevPayProductToken() {
-        return this.awsDevPayProductToken;
-    }
-
-    /**
-     * Instruct the service whether to generate Requester Pays requests when
-     * uploading data to S3, or retrieving data from the service. The default
-     * value for the Requester Pays Enabled setting is set according to the
-     * jets3t.properties setting
-     * <code>httpclient.requester-pays-buckets-enabled</code>.
-     *
-     * @param isRequesterPays
-     * if true, all subsequent S3 service requests will include the Requester
-     * Pays flag.
-     */
-    public void setRequesterPaysEnabled(boolean isRequesterPays) {
-        this.isRequesterPaysEnabled = isRequesterPays;
-    }
-
-    /**
-     * Is this service configured to generate Requester Pays requests when
-     * uploading data to S3, or retrieving data from the service. The default
-     * value for the Requester Pays Enabled setting is set according to the
-     * jets3t.properties setting
-     * <code>httpclient.requester-pays-buckets-enabled</code>.
-     *
-     * @return
-     * true if S3 service requests will include the Requester Pays flag, false
-     * otherwise.
-     */
-    public boolean isRequesterPaysEnabled() {
-        return this.isRequesterPaysEnabled;
     }
 
     /**
@@ -512,16 +441,11 @@ public abstract class S3Service implements Serializable {
             headersMap.put(requesterPaysHeaderAndValue[0], requesterPaysHeaderAndValue[1]);
         }
 
-        String serviceEndpointVirtualPath = this.jets3tProperties.getStringProperty(
-            "s3service.s3-endpoint-virtual-path", "");
-        int httpPort = this.jets3tProperties.getIntProperty(
-            "s3service.s3-endpoint-http-port", 80);
-        int httpsPort = this.jets3tProperties.getIntProperty(
-            "s3service.s3-endpoint-https-port", 443);
+        String serviceEndpointVirtualPath = this.getVirtualPath();
 
         String canonicalString = RestUtils.makeS3CanonicalString(method,
             serviceEndpointVirtualPath + "/" + virtualBucketPath + uriPath,
-            RestUtils.renameMetadataKeys(headersMap), String.valueOf(secondsSinceEpoch));
+            renameMetadataKeys(headersMap), String.valueOf(secondsSinceEpoch), this.getRestHeaderPrefix());
         if (log.isDebugEnabled()) {
             log.debug("Signing canonical string:\n" + canonicalString);
         }
@@ -532,21 +456,18 @@ public abstract class S3Service implements Serializable {
         uriPath += "&Signature=" + encodedCanonical;
 
         if (isHttps) {
+            int httpsPort = this.getHttpsPort();
             return "https://" + hostname
                 + (httpsPort != 443 ? ":" + httpsPort : "")
                 + serviceEndpointVirtualPath
                 + "/" + uriPath;
         } else {
+            int httpPort = this.getHttpPort();
             return "http://" + hostname
             + (httpPort != 80 ? ":" + httpPort : "")
             + serviceEndpointVirtualPath
             + "/" + uriPath;
         }
-    }
-
-    protected String getEndpoint() {
-        return this.jets3tProperties.getStringProperty(
-                "s3service.s3-endpoint", Constants.S3_DEFAULT_HOSTNAME);
     }
 
     /**
@@ -586,10 +507,8 @@ public abstract class S3Service implements Serializable {
         String specialParamName, Map headersMap, long secondsSinceEpoch, boolean isVirtualHost)
         throws S3ServiceException
     {
-        boolean isHttps = this.jets3tProperties
-            .getBoolProperty("s3service.https-only", true);
-        boolean disableDnsBuckets = this.jets3tProperties
-            .getBoolProperty("s3service.disable-dns-buckets", false);
+        boolean isHttps = this.isHttpsOnly();
+        boolean disableDnsBuckets = this.getDisableDnsBuckets();
 
         return createSignedUrl(method, bucketName, objectKey, specialParamName,
             headersMap, secondsSinceEpoch, isVirtualHost, isHttps, disableDnsBuckets);
@@ -915,16 +834,12 @@ public abstract class S3Service implements Serializable {
      *
      * @throws S3ServiceException
      */
-    public static String createSignedUrl(String method, String bucketName, String objectKey,
+    public String createSignedUrl(String method, String bucketName, String objectKey,
         String specialParamName, Map headersMap, ProviderCredentials credentials,
         long secondsSinceEpoch, boolean isVirtualHost) throws S3ServiceException
     {
-        Jets3tProperties jets3tProperties =
-            Jets3tProperties.getInstance(Constants.JETS3T_PROPERTIES_FILENAME);
-        boolean isHttps = jets3tProperties
-            .getBoolProperty("s3service.https-only", true);
-        boolean disableDnsBuckets = jets3tProperties
-            .getBoolProperty("s3service.disable-dns-buckets", false);
+        boolean isHttps = this.getHttpsOnly();
+        boolean disableDnsBuckets = this.getDisableDnsBuckets();
 
         return createSignedUrl(method, bucketName, objectKey, specialParamName,
             headersMap, credentials, secondsSinceEpoch, isVirtualHost, isHttps,
@@ -962,7 +877,7 @@ public abstract class S3Service implements Serializable {
      *
      * @throws S3ServiceException
      */
-    public static String createSignedUrl(String method, String bucketName, String objectKey,
+    public String createSignedUrl(String method, String bucketName, String objectKey,
         String specialParamName, Map headersMap, ProviderCredentials credentials, long secondsSinceEpoch)
         throws S3ServiceException
     {
@@ -992,7 +907,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to grant GET access to an S3 resource to whoever uses it.
      * @throws S3ServiceException
      */
-    public static String createSignedGetUrl(String bucketName, String objectKey,
+    public String createSignedGetUrl(String bucketName, String objectKey,
         ProviderCredentials credentials, Date expiryTime, boolean isVirtualHost)
         throws S3ServiceException
     {
@@ -1020,7 +935,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to grant GET access to an S3 resource to whoever uses it.
      * @throws S3ServiceException
      */
-    public static String createSignedGetUrl(String bucketName, String objectKey,
+    public String createSignedGetUrl(String bucketName, String objectKey,
         ProviderCredentials credentials, Date expiryTime)
         throws S3ServiceException
     {
@@ -1053,7 +968,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to allow anyone to PUT an object into S3.
      * @throws S3ServiceException
      */
-    public static String createSignedPutUrl(String bucketName, String objectKey,
+    public String createSignedPutUrl(String bucketName, String objectKey,
         Map headersMap, ProviderCredentials credentials, Date expiryTime, boolean isVirtualHost)
         throws S3ServiceException
     {
@@ -1085,7 +1000,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to allow anyone to PUT an object into S3.
      * @throws S3ServiceException
      */
-    public static String createSignedPutUrl(String bucketName, String objectKey,
+    public String createSignedPutUrl(String bucketName, String objectKey,
         Map headersMap, ProviderCredentials credentials, Date expiryTime)
         throws S3ServiceException
     {
@@ -1114,7 +1029,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to allow anyone do DELETE an object in S3.
      * @throws S3ServiceException
      */
-    public static String createSignedDeleteUrl(String bucketName, String objectKey,
+    public String createSignedDeleteUrl(String bucketName, String objectKey,
         ProviderCredentials credentials, Date expiryTime, boolean isVirtualHost)
         throws S3ServiceException
     {
@@ -1142,7 +1057,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to allow anyone do DELETE an object in S3.
      * @throws S3ServiceException
      */
-    public static String createSignedDeleteUrl(String bucketName, String objectKey,
+    public String createSignedDeleteUrl(String bucketName, String objectKey,
         ProviderCredentials credentials, Date expiryTime)
         throws S3ServiceException
     {
@@ -1171,7 +1086,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to grant HEAD access to an S3 resource to whoever uses it.
      * @throws S3ServiceException
      */
-    public static String createSignedHeadUrl(String bucketName, String objectKey,
+    public String createSignedHeadUrl(String bucketName, String objectKey,
         ProviderCredentials credentials, Date expiryTime, boolean isVirtualHost)
         throws S3ServiceException
     {
@@ -1199,7 +1114,7 @@ public abstract class S3Service implements Serializable {
      * a URL signed in such a way as to grant HEAD access to an S3 resource to whoever uses it.
      * @throws S3ServiceException
      */
-    public static String createSignedHeadUrl(String bucketName, String objectKey,
+    public String createSignedHeadUrl(String bucketName, String objectKey,
         ProviderCredentials credentials, Date expiryTime)
         throws S3ServiceException
     {
@@ -1210,8 +1125,6 @@ public abstract class S3Service implements Serializable {
      * Generates a URL string that will return a Torrent file for an object in S3,
      * which file can be downloaded and run in a BitTorrent client.
      *
-     * @deprecated 0.7.4
-     *
      * @param bucketName
      * the name of the bucket containing the object.
      * @param objectKey
@@ -1220,35 +1133,12 @@ public abstract class S3Service implements Serializable {
      * a URL to a Torrent file representing the object.
      * @throws S3ServiceException
      */
-    public static String createTorrentUrl(String bucketName, String objectKey) {
-        Jets3tProperties jets3tProperties = Jets3tProperties.getInstance(
-            Constants.JETS3T_PROPERTIES_FILENAME);
-        return createTorrentUrl(bucketName, objectKey, jets3tProperties);
-    }
-
-    /**
-     * Generates a URL string that will return a Torrent file for an object in S3,
-     * which file can be downloaded and run in a BitTorrent client.
-     *
-     * @param bucketName
-     * the name of the bucket containing the object.
-     * @param objectKey
-     * the name of the object.
-     * @return
-     * a URL to a Torrent file representing the object.
-     * @throws S3ServiceException
-     */
-    public static String createTorrentUrl(String bucketName, String objectKey,
-        Jets3tProperties jets3tProperties)
+    public String createTorrentUrl(String bucketName, String objectKey)
     {
-        String s3Endpoint = jets3tProperties.getStringProperty(
-            "s3service.s3-endpoint", Constants.S3_DEFAULT_HOSTNAME);
-        String serviceEndpointVirtualPath = jets3tProperties.getStringProperty(
-            "s3service.s3-endpoint-virtual-path", "");
-        int httpPort = jets3tProperties.getIntProperty(
-            "s3service.s3-endpoint-http-port", 80);
-        boolean disableDnsBuckets = jets3tProperties
-            .getBoolProperty("s3service.disable-dns-buckets", false);
+        String s3Endpoint = this.getEndpoint();
+        String serviceEndpointVirtualPath = this.getVirtualPath();
+        int httpPort = this.getHttpPort();
+        boolean disableDnsBuckets = this.getDisableDnsBuckets();
 
         String bucketNameInPath =
             !disableDnsBuckets && ServiceUtils.isBucketNameValidDNSName(bucketName)
@@ -3829,6 +3719,37 @@ public abstract class S3Service implements Serializable {
         return new Date(System.currentTimeMillis() + timeOffset);
     }
 
+    /**
+     * Renames metadata property names to be suitable for use as HTTP Headers. This is done
+     * by renaming any non-HTTP headers to have the prefix <code>x-amz-meta-</code> and leaving the
+     * HTTP header names unchanged. The HTTP header names left unchanged are those found in
+     * {@link #HTTP_HEADER_METADATA_NAMES}
+     *
+     * @param metadata
+     * @return
+     * a map of metadata property name/value pairs renamed to be suitable for use as HTTP headers.
+     */
+    public Map renameMetadataKeys(Map metadata) {
+        Map convertedMetadata = new HashMap();
+        // Add all meta-data headers.
+        if (metadata != null) {
+            Iterator metaDataIter = metadata.entrySet().iterator();
+            while (metaDataIter.hasNext()) {
+                Map.Entry entry = (Map.Entry) metaDataIter.next();
+                String key = (String) entry.getKey();
+                Object value = entry.getValue();
+
+                if (!RestUtils.HTTP_HEADER_METADATA_NAMES.contains(key.toLowerCase(Locale.getDefault()))
+                    && !key.startsWith(this.getRestHeaderPrefix()))
+                {
+                    key = this.getRestMetadataPrefix() + key;
+                }
+                convertedMetadata.put(key, value);
+            }
+        }
+        return convertedMetadata;
+    }
+
     // /////////////////////////////////////////////////////////////////////////////////
     // Abstract methods that must be implemented by interface-specific S3Service classes
     // /////////////////////////////////////////////////////////////////////////////////
@@ -4076,5 +3997,15 @@ public abstract class S3Service implements Serializable {
     protected abstract AccessControlList getBucketAclImpl(String bucketName) throws S3ServiceException;
 
     protected abstract void shutdownImpl() throws S3ServiceException;
+
+    protected abstract String getEndpoint();
+    protected abstract String getVirtualPath();
+    protected abstract String getSignatureIdentifier();
+    protected abstract String getRestHeaderPrefix();
+    protected abstract String getRestMetadataPrefix();
+    protected abstract int getHttpPort();
+    protected abstract int getHttpsPort();
+    protected abstract boolean getHttpsOnly();
+    protected abstract boolean getDisableDnsBuckets();
 
 }

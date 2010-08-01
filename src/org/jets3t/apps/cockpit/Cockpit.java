@@ -2740,9 +2740,8 @@ public class Cockpit extends JApplet implements S3ServiceEventListener, ActionLi
         S3Object currentObject = objects[0];
 
         // Generate URL
-        String torrentUrl = S3Service.createTorrentUrl(
-            currentSelectedBucket.getName(), currentObject.getKey(),
-            this.cockpitProperties);
+        String torrentUrl = s3ServiceMulti.getS3Service().createTorrentUrl(
+            currentSelectedBucket.getName(), currentObject.getKey());
 
         // Display signed URL
         JOptionPane.showInputDialog(ownerFrame,
