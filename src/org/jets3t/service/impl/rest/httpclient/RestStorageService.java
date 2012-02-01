@@ -54,7 +54,6 @@ import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
 import org.jets3t.service.Constants;
 import org.jets3t.service.Jets3tProperties;
-import org.jets3t.service.S3ServiceException;
 import org.jets3t.service.ServiceException;
 import org.jets3t.service.StorageObjectsChunk;
 import org.jets3t.service.StorageService;
@@ -63,13 +62,11 @@ import org.jets3t.service.impl.rest.HttpException;
 import org.jets3t.service.impl.rest.XmlResponsesSaxParser.CopyObjectResultHandler;
 import org.jets3t.service.impl.rest.XmlResponsesSaxParser.ListBucketHandler;
 import org.jets3t.service.model.CreateBucketConfiguration;
-import org.jets3t.service.model.MultipleDeleteResult;
 import org.jets3t.service.model.S3Object;
 import org.jets3t.service.model.StorageBucket;
 import org.jets3t.service.model.StorageBucketLoggingStatus;
 import org.jets3t.service.model.StorageObject;
 import org.jets3t.service.model.StorageOwner;
-import org.jets3t.service.model.container.ObjectKeyAndVersion;
 import org.jets3t.service.mx.MxDelegate;
 import org.jets3t.service.security.ProviderCredentials;
 import org.jets3t.service.utils.Mimetypes;
@@ -552,19 +549,23 @@ public abstract class RestStorageService extends StorageService implements JetS3
                 }
             } while (!completedWithoutRecoverableError);
         } catch (Throwable t) {
-            if (log.isTraceEnabled()){
+            if (log.isDebugEnabled()){
                 String msg = "Rethrowing as a ServiceException error in performRequest: " + t;
                 if (t.getCause() != null){
                     msg += ", with cause: " + t.getCause();
                 }
-                log.trace(msg, t);
+                if (log.isTraceEnabled()){
+                    log.trace(msg, t);
+                } else {
+                    log.debug(msg);
+                }
             }
             if (log.isDebugEnabled() && !shuttingDown) {
                 log.debug("Releasing HttpClient connection after error: " + t.getMessage());
             }
             httpMethod.abort();
 
-            ServiceException serviceException = null;
+            ServiceException serviceException;
             if (t instanceof ServiceException) {
                 serviceException = (ServiceException) t;
             } else {
@@ -1905,9 +1906,7 @@ public abstract class RestStorageService extends StorageService implements JetS3
                 log.debug("Applied default storage class '" + storageClass
                     + "' to object '" + objectKey + "'");
             }
-            if (storageClass != null
-                && storageClass != "")  // Hack to avoid applying default storage class
-            {
+            if (storageClass != null) {
                 metadata.put(this.getRestHeaderPrefix() + "storage-class", storageClass);
             }
         }
