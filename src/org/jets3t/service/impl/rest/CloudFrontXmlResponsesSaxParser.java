@@ -36,6 +36,7 @@ import org.jets3t.service.Constants;
 import org.jets3t.service.Jets3tProperties;
 import org.jets3t.service.S3ServiceException;
 import org.jets3t.service.ServiceException;
+import org.jets3t.service.model.cloudfront.CacheBehavior;
 import org.jets3t.service.model.cloudfront.CustomOrigin;
 import org.jets3t.service.model.cloudfront.Distribution;
 import org.jets3t.service.model.cloudfront.DistributionConfig;
@@ -49,6 +50,7 @@ import org.jets3t.service.model.cloudfront.OriginAccessIdentityConfig;
 import org.jets3t.service.model.cloudfront.S3Origin;
 import org.jets3t.service.model.cloudfront.StreamingDistribution;
 import org.jets3t.service.model.cloudfront.StreamingDistributionConfig;
+import org.jets3t.service.model.cloudfront.CacheBehavior.ViewerProtocolPolicy;
 import org.jets3t.service.utils.ServiceUtils;
 import org.xml.sax.InputSource;
 import org.xml.sax.XMLReader;
@@ -301,20 +303,120 @@ public class CloudFrontXmlResponsesSaxParser {
         }
     }
 
+    public class LoggingStatusHandler extends SimpleHandler {
+        private LoggingStatus loggingStatus = new LoggingStatus(false, null, null);
+
+        public LoggingStatusHandler(XMLReader xr) {
+            super(xr);
+        }
+
+        public LoggingStatus getLoggingStatus() {
+            return loggingStatus;
+        }
+
+        public void endEnabled(String text) {
+            loggingStatus.setEnabled("true".equals(text));
+        }
+
+        public void endBucket(String text) {
+            loggingStatus.setBucket(text);
+        }
+
+        public void endPrefix(String text) {
+            loggingStatus.setPrefix(text);
+        }
+
+        public void endLogging(String text) {
+            returnControlToParentHandler();
+        }
+    }
+
+    public class TrustedSignersHandler extends SimpleHandler {
+        private List<String> trustedSigners = new ArrayList<String>();
+
+        public TrustedSignersHandler(XMLReader xr) {
+            super(xr);
+        }
+
+        public String[] getTrustedSigners() {
+            return trustedSigners.toArray(new String[trustedSigners.size()]);
+        }
+
+        public void endAwsAccountNumber(String text) {
+            trustedSigners.add(text);
+        }
+
+        public void endTrustedSigners(String text) {
+            returnControlToParentHandler();
+        }
+    }
+
+    public class CacheBehaviorHandler extends SimpleHandler {
+        private CacheBehavior cacheBehavior = new CacheBehavior();
+
+        public CacheBehaviorHandler(XMLReader xr) {
+            super(xr);
+        }
+
+        public CacheBehavior getCacheBehavior() {
+            return cacheBehavior;
+        }
+
+        public void endPathPattern(String text) {
+            cacheBehavior.setPathPattern(text);
+        }
+
+        public void endTargetOriginId(String text) {
+            cacheBehavior.setTargetOriginId(text);
+        }
+
+        public void endQueryString(String text) {
+            cacheBehavior.setIsForwardQueryString("true".equals(text));
+        }
+
+        public void endViewerProtocolPolicy(String text) {
+            cacheBehavior.setViewerProtocolPolicy(ViewerProtocolPolicy.fromText(text));
+        }
+
+        public void endMinTTL(String text) {
+            cacheBehavior.setMinTTL(new Long(text));
+        }
+
+        public void startTrustedSigners() {
+            transferControlToHandler(new TrustedSignersHandler(xr));
+        }
+
+        @Override
+        public void controlReturned(SimpleHandler childHandler) {
+            cacheBehavior.setTrustedSignerAwsAccountNumbers(
+                ((TrustedSignersHandler)childHandler).getTrustedSigners());
+        }
+
+        public void endDefaultCacheBehavior(String text) {
+            returnControlToParentHandler();
+        }
+
+        public void endCacheBehavior(String text) {
+            returnControlToParentHandler();
+        }
+    }
+
     public class DistributionConfigHandler extends SimpleHandler {
         private DistributionConfig distributionConfig = null;
 
         private String callerReference = "";
-        private Origin origin = null;
+        private List<Origin> origins = new ArrayList<Origin>();
         private final List<String> cnamesList = new ArrayList<String>();
         private String comment = "";
         private boolean enabled = false;
         private LoggingStatus loggingStatus = null;
-        private boolean trustedSignerSelf = false;
-        private final List<String> trustedSignerAwsAccountNumberList = new ArrayList<String>();
-        private final List<String> requiredProtocols = new ArrayList<String>();
         private String defaultRootObject = null;
         private Long minTTL = null;
+        private CacheBehavior defaultCacheBehavior;
+        private List<CacheBehavior> cacheBehaviors = new ArrayList<CacheBehavior>();
+        List<String>trustedSignerAwsAccountNumberList = new ArrayList<String>();
+
+        private boolean inDefaultCacheBehavior = false;
 
         public DistributionConfigHandler(XMLReader xr) {
             super(xr);
@@ -328,21 +430,12 @@ public class CloudFrontXmlResponsesSaxParser {
             this.callerReference = text;
         }
 
-        public void startS3Origin() {
-            transferControlToHandler(new OriginHandler(xr));
-        }
-
-        public void startCustomOrigin() {
-            transferControlToHandler(new OriginHandler(xr));
-        }
-
-        @Override
-        public void controlReturned(SimpleHandler childHandler) {
-            this.origin = ((OriginHandler) childHandler).origin;
-        }
-
         public void endCNAME(String text) {
             this.cnamesList.add(text);
+        }
+
+        public void endDefaultRootObject(String text) {
+            this.defaultRootObject = text;
         }
 
         public void endComment(String text) {
@@ -353,63 +446,58 @@ public class CloudFrontXmlResponsesSaxParser {
             this.enabled = "true".equalsIgnoreCase(text);
         }
 
+        public void startOrigin() {
+            transferControlToHandler(new OriginHandler(xr));
+        }
+
+        public void startDefaultCacheBehavior() {
+            inDefaultCacheBehavior = true;
+            transferControlToHandler(new CacheBehaviorHandler(xr));
+        }
+
+        public void startCacheBehavior() {
+            inDefaultCacheBehavior = false;
+            transferControlToHandler(new CacheBehaviorHandler(xr));
+        }
+
         public void startLogging() {
-            this.loggingStatus = new LoggingStatus();
+            transferControlToHandler(new LoggingStatusHandler(xr));
         }
 
-        public void endBucket(String text) {
-            this.loggingStatus.setBucket(text);
-        }
-
-        public void endPrefix(String text) {
-            this.loggingStatus.setPrefix(text);
-        }
-
-        public void endSelf(String text) {
-            this.trustedSignerSelf = true;
-        }
-
-        public void endAwsAccountNumber(String text) {
-            this.trustedSignerAwsAccountNumberList.add(text);
-        }
-
-        public void endProtocol(String text) {
-            this.requiredProtocols.add(text);
-        }
-
-        public void endDefaultRootObject(String text) {
-            this.defaultRootObject = text;
-        }
-
-        public void endMinTTL(String text) {
-            this.minTTL = new Long(text);
+        @Override
+        public void controlReturned(SimpleHandler childHandler) {
+            if (childHandler instanceof OriginHandler) {
+                this.origins.add( ((OriginHandler) childHandler).origin );
+            } else if (childHandler instanceof CacheBehaviorHandler) {
+                if (inDefaultCacheBehavior) {
+                    this.defaultCacheBehavior = ((CacheBehaviorHandler) childHandler).cacheBehavior;
+                } else {
+                    this.cacheBehaviors.add( ((CacheBehaviorHandler) childHandler).cacheBehavior );
+                }
+            } else if (childHandler instanceof LoggingStatusHandler) {
+                this.loggingStatus = ((LoggingStatusHandler) childHandler).loggingStatus;
+            }
         }
 
         public void endDistributionConfig(String text) {
             this.distributionConfig = new DistributionConfig(
-                origin, callerReference,
+                origins.toArray(new Origin[origins.size()]),
+                callerReference,
                 cnamesList.toArray(new String[cnamesList.size()]),
-                comment, enabled, loggingStatus, trustedSignerSelf,
-                trustedSignerAwsAccountNumberList.toArray(
-                    new String[trustedSignerAwsAccountNumberList.size()]),
-                requiredProtocols.toArray(
-                    new String[requiredProtocols.size()]),
-                defaultRootObject,
-                this.minTTL
-                );
+                comment, enabled, loggingStatus,
+                defaultCacheBehavior,
+                cacheBehaviors.toArray(new CacheBehavior[cacheBehaviors.size()]));
             returnControlToParentHandler();
         }
 
         public void endStreamingDistributionConfig(String text) {
             this.distributionConfig = new StreamingDistributionConfig(
-                origin, callerReference,
+                origins.toArray(new Origin[origins.size()]),
+                callerReference,
                 cnamesList.toArray(new String[cnamesList.size()]), comment,
-                enabled, loggingStatus, trustedSignerSelf,
+                enabled, loggingStatus,
                 trustedSignerAwsAccountNumberList.toArray(
-                    new String[trustedSignerAwsAccountNumberList.size()]),
-                requiredProtocols.toArray(
-                    new String[requiredProtocols.size()])
-                );
+                    new String[trustedSignerAwsAccountNumberList.size()]));
             returnControlToParentHandler();
         }
     }
@@ -420,11 +508,16 @@ public class CloudFrontXmlResponsesSaxParser {
         private String id = null;
         private String status = null;
         private Date lastModifiedTime = null;
+        private Long inProgressInvalidationBatches = 0l;
         private String domainName = null;
-        private Origin origin = null;
+        private List<Origin> origins = new ArrayList<Origin>();
         private final List<String> cnamesList = new ArrayList<String>();
         private String comment = null;
         private boolean enabled = false;
+        private CacheBehavior defaultCacheBehavior = null;
+        private List<CacheBehavior> cacheBehaviors = new ArrayList<CacheBehavior>();
+
+        private boolean inDefaultCacheBehavior = false;
 
         public DistributionSummaryHandler(XMLReader xr) {
             super(xr);
@@ -446,25 +539,43 @@ public class CloudFrontXmlResponsesSaxParser {
             this.lastModifiedTime = ServiceUtils.parseIso8601Date(text);
         }
 
+        public void endInProgressInvalidationBatches(String text) {
+            this.inProgressInvalidationBatches = Long.parseLong(text);
+        }
+
         public void endDomainName(String text) {
             this.domainName = text;
         }
 
-        public void startS3Origin() {
+        public void endCNAME(String text) {
+            this.cnamesList.add(text);
+        }
+
+        public void startOrigin() {
             transferControlToHandler(new OriginHandler(xr));
         }
 
-        public void startCustomOrigin() {
-            transferControlToHandler(new OriginHandler(xr));
+        public void startDefaultCacheBehavior() {
+            inDefaultCacheBehavior = true;
+            transferControlToHandler(new CacheBehaviorHandler(xr));
+        }
+
+        public void startCacheBehavior() {
+            inDefaultCacheBehavior = false;
+            transferControlToHandler(new CacheBehaviorHandler(xr));
         }
 
         @Override
         public void controlReturned(SimpleHandler childHandler) {
-            this.origin = ((OriginHandler) childHandler).origin;
-        }
-
-        public void endCNAME(String text) {
-            this.cnamesList.add(text);
+            if (childHandler instanceof OriginHandler) {
+                this.origins.add( ((OriginHandler) childHandler).origin );
+            } else if (childHandler instanceof CacheBehaviorHandler) {
+                if (inDefaultCacheBehavior) {
+                    this.defaultCacheBehavior = ((CacheBehaviorHandler) childHandler).cacheBehavior;
+                } else {
+                    this.cacheBehaviors.add( ((CacheBehaviorHandler) childHandler).cacheBehavior );
+                }
+            }
         }
 
         public void endComment(String text) {
@@ -476,25 +587,39 @@ public class CloudFrontXmlResponsesSaxParser {
         }
 
         public void endDistributionSummary(String text) {
+            DistributionConfig config = new DistributionConfig(
+                this.origins.toArray(new Origin[] {}),
+                null,  // callerReference
+                this.cnamesList.toArray(new String[] {}),
+                this.comment,
+                this.enabled,
+                null,  // loggingStatus
+                this.defaultCacheBehavior,
+                this.cacheBehaviors.toArray(new CacheBehavior[] {})
+                );
             this.distribution = new Distribution(id, status,
-                lastModifiedTime, domainName, origin,
-                cnamesList.toArray(new String[cnamesList.size()]),
-                comment, enabled);
+                lastModifiedTime, inProgressInvalidationBatches, domainName, null, config);
             returnControlToParentHandler();
         }
 
         public void endStreamingDistributionSummary(String text) {
+            StreamingDistributionConfig config = new StreamingDistributionConfig(
+                this.origins.toArray(new Origin[] {}),
+                null,  // callerReference
+                this.cnamesList.toArray(new String[] {}),
+                this.comment,
+                this.enabled,
+                null,  // loggingStatus
+                null  // trustedSignerAwsAccountNumbers
+                );
             this.distribution = new StreamingDistribution(id, status,
-                lastModifiedTime, domainName, origin,
-                cnamesList.toArray(new String[cnamesList.size()]),
-                comment, enabled);
+                lastModifiedTime, domainName, null, config);
             returnControlToParentHandler();
         }
     }
 
     public class DistributionListHandler extends SimpleHandler {
         private final List<Distribution> distributions = new ArrayList<Distribution>();
-        private final List<String> cnamesList = new ArrayList<String>();
         private String marker = null;
         private String nextMarker = null;
         private int maxItems = 100;
@@ -538,10 +663,6 @@ public class CloudFrontXmlResponsesSaxParser {
                 ((DistributionSummaryHandler) childHandler).getDistribution());
         }
 
-        public void endCNAME(String text) {
-            this.cnamesList.add(text);
-        }
-
         public void endMarker(String text) {
             this.marker = text;
         }
@@ -561,7 +682,8 @@ public class CloudFrontXmlResponsesSaxParser {
 
     public class OriginHandler extends SimpleHandler {
         protected Origin origin = null;
-        private String dnsName = "";
+        private String id;
+        private String domainName = "";
         private String originAccessIdentity = null; // S3Origin
         private String httpPort = null; // CustomOrigin
         private String httpsPort = null; // CustomOrigin
@@ -571,8 +693,12 @@ public class CloudFrontXmlResponsesSaxParser {
             super(xr);
         }
 
-        public void endDNSName(String text) {
-            this.dnsName = text;
+        public void endId(String text) {
+            this.id = text;
+        }
+
+        public void endDomainName(String text) {
+            this.domainName = text;
         }
 
         public void endOriginAccessIdentity(String text) {
@@ -591,13 +717,13 @@ public class CloudFrontXmlResponsesSaxParser {
             this.originProtocolPolicy = text;
         }
 
-        public void endS3Origin(String text) {
-            this.origin = new S3Origin(this.dnsName, this.originAccessIdentity);
+        public void endS3OriginConfig(String text) {
+            this.origin = new S3Origin(this.id, this.domainName, this.originAccessIdentity);
             returnControlToParentHandler();
         }
 
-        public void endCustomOrigin(String text) {
-            this.origin = new CustomOrigin(this.dnsName,
+        public void endCustomOriginConfig(String text) {
+            this.origin = new CustomOrigin(this.id, this.domainName,
                 CustomOrigin.OriginProtocolPolicy.fromText(this.originProtocolPolicy),
                 Integer.valueOf(this.httpPort), Integer.valueOf(this.httpsPort));
             returnControlToParentHandler();
